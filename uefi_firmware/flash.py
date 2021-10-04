@@ -32,12 +32,13 @@ class DescriptorMap(StructuredObject):
 
 class FlashRegion(FirmwareObject, BaseObject):
 
-    def __init__(self, data, region_name, region_details, base):
+    def __init__(self, data, region_name, region_details, base=0):
         self.sections = []
         self.data = data
         self.attrs = region_details
         self.name = region_name
         self.base = base
+        self._data_offset = None
 
     @property
     def objects(self):
@@ -92,7 +93,7 @@ class FlashRegion(FirmwareObject, BaseObject):
 
 class FlashDescriptor(FirmwareObject):
 
-    def __init__(self, data, base):
+    def __init__(self, data, base=0):
         self.valid_header = False
         self.size = len(data)
         self.base = base
@@ -106,6 +107,7 @@ class FlashDescriptor(FirmwareObject):
         self.valid_header = True
         self.regions = []
         self.data = data
+        self._data_offset = None
 
     @property
     def objects(self):

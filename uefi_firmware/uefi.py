@@ -194,6 +194,7 @@ class NVARVariable(FirmwareVariable):
         self.guid = None
         self.data = data
         self.base = base
+        self._data_offset = None
 
     def process(self):
         dlog(self, 'NVAR')
@@ -241,6 +242,7 @@ class NVARVariable(FirmwareVariable):
             data += section.build(generate_checksum, debug)
         if len(self.subsections) == 0:
             data = self.data[self.data_offset:]
+            self._data_offset = self.data_offset
         # Metadata includes optional guid/name.
         meta_data = self.data[self.structure_size:self.data_offset]
         return header + meta_data + data
@@ -280,6 +282,7 @@ class NVARVariableStore(FirmwareVariableStore):
         self.data = data
         self.valid_header = True
         self.base = base
+        self._data_offset = None
 
     def process(self):
         dlog(self, 'NVRAM')
@@ -587,6 +590,7 @@ class GuidDefinedSection(EfiSection):
         self.attrs = {"attrs": self.attr_mask}
         self.subsections = []
         self.base = base
+        self._data_offset = None
 
     @property
     def objects(self):
@@ -708,7 +712,7 @@ class FirmwareFileSystemSection(EfiSection):
     parsed_object = None
     '''For object sections, keep track of each.'''
 
-    def __init__(self, data, guid):
+    def __init__(self, data, guid, base=0):
         self.guid = guid
         header = data[:0x4]
 
@@ -730,8 +734,9 @@ class FirmwareFileSystemSection(EfiSection):
 
         self._data = data[:self.size]
         self.data = data[0x4:self.size]
-        self.data_offset = 0x4
+        self._data_offset = 0x4
         self.name = None
+        self.base = base
 
     @property
     def objects(self):
@@ -741,7 +746,7 @@ class FirmwareFileSystemSection(EfiSection):
         # Transitional method, should be adopted by other objects.
         self._data = data
         self.data = data[0x4:]
-        self.data_offset = 0x4
+        self._data_offset = 0x4
 
     def process(self):
         # section types, see PI spec v1.7 Errata A Volume 3, 2.1.5.1, table 3-4
@@ -933,7 +938,7 @@ class FirmwareFile(FirmwareObject):
         # The size includes the header bytes.
         self._data = data[:self.size]
         self.data = data[self._HEADER_SIZE:self.size]
-        self.data_offset = self._HEADER_SIZE
+        self._data_offset = self._HEADER_SIZE
         self.base = base
         self.raw_blobs = []
         self.sections = []
@@ -1171,6 +1176,7 @@ class FirmwareFileSystem(FirmwareObject):
         self.files = []
         self._data = data
         self.base = base
+        self._data_offset = None
 
         # Overflow data is non-file data within the filesystem
         self.overflow_data = ""
@@ -1316,13 +1322,14 @@ class FirmwareVolume(FirmwareObject):
         self.blocks = []
         self.block_map = ""
         self.base = base
+        self._data_offset = None
 
         try:
             data = data[:self.size]
 
             self._data = data
             self.data = data[self.hdrlen:]
-            self.data_offset = self.hdrlen
+            self._data_offset = self.hdrlen
             self.block_map = data[self._HEADER_SIZE:self.hdrlen]
         except Exception as e:
             dlog(self, name, "Exception in __init__: %s" % (str(e)))

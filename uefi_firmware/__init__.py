@@ -165,6 +165,7 @@ class MultiVolumeContainer(FirmwareObject):
         self.volumes = []
         self.size = 0
         self.base = base
+        self._data_offset = None
 
     def has_indexes(self):
         '''Check if any indexes were discovered.'''
