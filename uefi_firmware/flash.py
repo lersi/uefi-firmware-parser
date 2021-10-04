@@ -32,11 +32,12 @@ class DescriptorMap(StructuredObject):
 
 class FlashRegion(FirmwareObject, BaseObject):
 
-    def __init__(self, data, region_name, region_details):
+    def __init__(self, data, region_name, region_details, base):
         self.sections = []
         self.data = data
         self.attrs = region_details
         self.name = region_name
+        self.base = base
 
     @property
     def objects(self):
@@ -47,16 +48,19 @@ class FlashRegion(FirmwareObject, BaseObject):
 
         if self.name == "bios":
             data = self.data
+            current_offset = 0
             while True:
                 volume_index = search_firmware_volumes(data, limit=1)
                 if len(volume_index) == 0:
                     break
-                fv = FirmwareVolume(data[volume_index[0] - 40:])
+                fv = FirmwareVolume(data[volume_index[0] - 40:], base=self._add_base_to_offset(current_offset + volume_index[0] - 40))
                 if fv.valid_header:
                     self.sections.append(fv)
                     data = data[volume_index[0] - 40 + fv.size:]
+                    current_offset += volume_index[0] - 40 + fv.size
                 else:
                     data = data[volume_index[0] + 8:]
+                    current_offset += volume_index[0] + 8
         if self.name == "me":
             data = self.data
             me = MeContainer(data)
@@ -88,9 +92,10 @@ class FlashRegion(FirmwareObject, BaseObject):
 
 class FlashDescriptor(FirmwareObject):
 
-    def __init__(self, data):
+    def __init__(self, data, base):
         self.valid_header = False
         self.size = len(data)
+        self.base = base
         if self.size < 20:
             return
 
@@ -125,9 +130,9 @@ class FlashDescriptor(FirmwareObject):
 
         bios_base = self.region.structure.BiosBase
         bios_limit = self.region.structure.BiosLimit
-        bios_size = _region_offset(
-            bios_base) + _region_size(bios_base, bios_limit)
-        bios = self.data[_region_offset(bios_base): bios_size]
+        bios_offset = _region_offset(bios_base)
+        bios_size = bios_offset + _region_size(bios_base, bios_limit)
+        bios = self.data[bios_offset: bios_size]
 
         bios_region = FlashRegion(bios, "bios", {
             "base": bios_base,
@@ -135,14 +140,15 @@ class FlashDescriptor(FirmwareObject):
             "id": self.master.structure.BiosId,
             "read": self.master.structure.BiosRead,
             "write": self.master.structure.BiosWrite
-        })
+        }, bios_offset)
         bios_region.process()
         self.regions.append(bios_region)
 
         me_base = self.region.structure.MeBase
         me_limit = self.region.structure.MeLimit
-        me_size = _region_offset(me_base) + _region_size(me_base, me_limit)
-        me = self.data[_region_offset(me_base): me_size]
+        me_offset = _region_offset(me_base)
+        me_size = me_offset + _region_size(me_base, me_limit)
+        me = self.data[me_offset: me_size]
 
         me_region = FlashRegion(me, "me", {
             "base": me_base,
@@ -150,14 +156,15 @@ class FlashDescriptor(FirmwareObject):
             "id": self.master.structure.MeId,
             "read": self.master.structure.MeRead,
             "write": self.master.structure.MeWrite
-        })
+        }, me_offset)
         me_region.process()
         self.regions.append(me_region)
 
         gbe_base = self.region.structure.GbeBase
         gbe_limit = self.region.structure.GbeLimit
-        gbe_size = _region_offset(gbe_base) + _region_size(gbe_base, gbe_limit)
-        gbe = self.data[_region_offset(gbe_base): gbe_size]
+        gbe_offset = _region_offset(gbe_base)
+        gbe_size = gbe_offset + _region_size(gbe_base, gbe_limit)
+        gbe = self.data[: gbe_size]
 
         gbe_region = FlashRegion(gbe, "gbe", {
             "base": gbe_base,
@@ -171,8 +178,9 @@ class FlashDescriptor(FirmwareObject):
 
         pdr_base = self.region.structure.PdrBase
         pdr_limit = self.region.structure.PdrLimit
-        pdr_size = _region_offset(pdr_base) + _region_size(pdr_base, pdr_limit)
-        pdr = self.data[_region_offset(pdr_base): pdr_size]
+        pdr_offset = _region_offset(pdr_base)
+        pdr_size = pdr_offset + _region_size(pdr_base, pdr_limit)
+        pdr = self.data[pdr_offset: pdr_size]
 
         pdr_region = FlashRegion(pdr, "pdr", {
             "base": pdr_base,
@@ -216,4 +224,4 @@ class FlashDescriptor(FirmwareObject):
         for region in self.regions:
             region.dump(parent)
 
-    pass
+    

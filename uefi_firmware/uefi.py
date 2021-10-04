@@ -110,7 +110,7 @@ def decompress(algorithms, compressed_data):
     return None
 
 
-def find_volumes(data, process=True):
+def find_volumes(data, process=True, base=0):
     '''Search for arbitary firmware volumes within data.
 
     This is helpful within Raw files and sections.
@@ -128,14 +128,16 @@ def find_volumes(data, process=True):
         list: The set of discovered firmware objects.
     '''
     objects = []
+    current_offset = base
     while True:
         volume_index = data.find(b"_FVH")
         if volume_index < 0:
             break
         volume_index -= (8 + 16 * 2)
-        fv = FirmwareVolume(data[volume_index:])
+        fv = FirmwareVolume(data[volume_index:], base=current_offset + volume_index)
         if not fv.valid_header:
             data = data[16 * 3:]
+            current_offset += 16 * 3
             continue
         if volume_index > 0:
             objects.append(RawObject(data[:volume_index]))
@@ -143,6 +145,7 @@ def find_volumes(data, process=True):
             fv.process()
         objects.append(fv)
         data = data[volume_index + fv.size:]
+        current_offset += volume_index + fv.size
     if len(data) > 0:
         objects.append(RawObject(data))
     return objects
@@ -185,11 +188,12 @@ class NVARVariable(FirmwareVariable):
             name = data[:size]
         return (name, size + len(tail))
 
-    def __init__(self, data):
+    def __init__(self, data, base=0):
         self.subsections = []
         self.name = None
         self.guid = None
         self.data = data
+        self.base = base
 
     def process(self):
         dlog(self, 'NVAR')
@@ -268,13 +272,14 @@ class NVARVariable(FirmwareVariable):
 class NVARVariableStore(FirmwareVariableStore):
     '''NVAR has no header, only a series of variable headers.'''
 
-    def __init__(self, data):
+    def __init__(self, data, base=0):
         self.variables = []
         self.valid_header = False
         if not NVARVariable.valid_nvar(data):
             return
         self.data = data
         self.valid_header = True
+        self.base = base
 
     def process(self):
         dlog(self, 'NVRAM')
@@ -284,7 +289,7 @@ class NVARVariableStore(FirmwareVariableStore):
         var_offset = self.data
         total_size = 0
         while len(var_offset) > 4:
-            nvar = NVARVariable(var_offset)
+            nvar = NVARVariable(var_offset, base=self._add_base_to_offset(total_size))
             if not nvar.process():
                 break
             total_size += nvar.size
@@ -572,7 +577,7 @@ class GuidDefinedSection(EfiSection):
     ATTR_PROCESSING_REQUIRED = 0x01
     ATTR_AUTH_STATUS_VALID = 0x02
 
-    def __init__(self, data):
+    def __init__(self, data, base=0):
         self.guid, self.offset, self.attr_mask = struct.unpack(
             "<16sHH", data[:20])
 
@@ -581,6 +586,7 @@ class GuidDefinedSection(EfiSection):
         self.data = data[self.offset:]
         self.attrs = {"attrs": self.attr_mask}
         self.subsections = []
+        self.base = base
 
     @property
     def objects(self):
@@ -588,8 +594,8 @@ class GuidDefinedSection(EfiSection):
 
     def process(self):
         dlog(self, sguid(self.guid))
-        def parse_volume():
-            fv = FirmwareVolume(self.data)
+        def parse_volume(offset: int):
+            fv = FirmwareVolume(self.data, base=self._add_base_to_offset(offset))
             if fv.valid_header:
                 fv.process()
                 self.subsections = [fv]
@@ -620,18 +626,18 @@ class GuidDefinedSection(EfiSection):
             status = self.process_subsections()
             if len(self.subsections) == 0:
                 # There were no subsections parsed, treat as a firmware volume
-                status = parse_volume()
+                status = parse_volume(16)
                 if not status:
                     raw = AutoRawObject(self.data)
                     raw.process()
                     self.subsections.append(raw)
             pass
         elif sguid(self.guid) == FIRMWARE_GUIDED_GUIDS["FIRMWARE_VOLUME"]:
-            status = parse_volume()
+            status = parse_volume(20)
         else:
             # Undefined GUIDed-Section GUID, treat as a FV, don't require
             # status
-            parse_volume()
+            parse_volume(20)
         if not status:
             dlog(self, sguid(self.guid), 'Could not parse GUID object')
         return status
@@ -724,6 +730,7 @@ class FirmwareFileSystemSection(EfiSection):
 
         self._data = data[:self.size]
         self.data = data[0x4:self.size]
+        self.data_offset = 0x4
         self.name = None
 
     @property
@@ -734,6 +741,7 @@ class FirmwareFileSystemSection(EfiSection):
         # Transitional method, should be adopted by other objects.
         self._data = data
         self.data = data[0x4:]
+        self.data_offset = 0x4
 
     def process(self):
         # section types, see PI spec v1.7 Errata A Volume 3, 2.1.5.1, table 3-4
@@ -756,10 +764,10 @@ class FirmwareFileSystemSection(EfiSection):
             self.name = uefi_name(self.data)
 
         elif self.type == 0x17:  # firmware-volume
-            fv = FirmwareVolume(self.data, sguid(self.guid))
+            fv = FirmwareVolume(self.data, sguid(self.guid), base=self._add_base_to_offset(0))
             if not fv.valid_header:
                 # Could be a FFSv3 section (Kairos sample)
-                fv = FirmwareVolume(self.data[4:], sguid(self.guid))
+                fv = FirmwareVolume(self.data[4:], sguid(self.guid), base=self._add_base_to_offset(4))
             if fv.valid_header:
                 self.parsed_object = fv
 
@@ -771,7 +779,7 @@ class FirmwareFileSystemSection(EfiSection):
             raw_object = True
             if self.data[:10] == b"123456789A":
                 # HP adds a strange header to nested FVs.
-                fv = FirmwareVolume(self.data[12:], sguid(self.guid))
+                fv = FirmwareVolume(self.data[12:], sguid(self.guid), base=self._add_base_to_offset(12))
                 self.parsed_object = fv
             else:
                 # For a raw section, we can cheat and assign the parsed object
@@ -903,7 +911,7 @@ class FirmwareFile(FirmwareObject):
     '''
     _HEADER_SIZE = 0x18  # 24 byte header, always
 
-    def __init__(self, data):
+    def __init__(self, data, base=0):
         header = data[:self._HEADER_SIZE]
 
         try:
@@ -925,6 +933,8 @@ class FirmwareFile(FirmwareObject):
         # The size includes the header bytes.
         self._data = data[:self.size]
         self.data = data[self._HEADER_SIZE:self.size]
+        self.data_offset = self._HEADER_SIZE
+        self.base = base
         self.raw_blobs = []
         self.sections = []
 
@@ -949,7 +959,7 @@ class FirmwareFile(FirmwareObject):
 
         status = True
         if sguid(self.guid) == FIRMWARE_VOLUME_GUIDS["NVRAM_NVAR"]:
-            var_store = NVARVariableStore(self.data)
+            var_store = NVARVariableStore(self.data, base=self._add_base_to_offset(0))
             if not var_store.valid_header:
                 raw = AutoRawObject(self.data)
                 raw.process()
@@ -1000,7 +1010,7 @@ class FirmwareFile(FirmwareObject):
         status = True
 
         # It may be a firmware volume (Lenovo or HP).
-        fv = FirmwareVolume(self.data, sguid(self.guid))
+        fv = FirmwareVolume(self.data, sguid(self.guid), base=self._add_base_to_offset(0))
         if fv.valid_header:
             has_object = True
             status = fv.process() and status
@@ -1008,7 +1018,7 @@ class FirmwareFile(FirmwareObject):
         elif self.data[0x10:0x10 + 4] == FLASH_HEADER:
             # Lenovo may also bundle a flash descriptor as raw content.
             from .flash import FlashDescriptor
-            flash = FlashDescriptor(self.data)
+            flash = FlashDescriptor(self.data, base=self._add_base_to_offset(0))
             if flash.valid_header:
                 has_object = True
                 status = flash.process() and status
@@ -1017,7 +1027,7 @@ class FirmwareFile(FirmwareObject):
         # If everything is normal (according to the FV/FF spec).
         if not has_object:
             # There may be arbitrary firmware structures (Lenovo)
-            objects = find_volumes(self.data)
+            objects = find_volumes(self.data, base=self.base)
             self.raw_blobs += objects
             return True
         return status
@@ -1157,9 +1167,10 @@ class FirmwareFileSystem(FirmwareObject):
     The FFS is a specific GUID within the FirmwareVolume.
     '''
 
-    def __init__(self, data):
+    def __init__(self, data, base=0):
         self.files = []
         self._data = data
+        self.base = base
 
         # Overflow data is non-file data within the filesystem
         self.overflow_data = ""
@@ -1174,8 +1185,9 @@ class FirmwareFileSystem(FirmwareObject):
         dlog(self, 'ffs')
         data = self._data
         status = True
+        current_offset = 0
         while len(data) >= 24 and data[:24] != (b"\xff" * 24):
-            firmware_file = FirmwareFile(data)
+            firmware_file = FirmwareFile(data, base=self._add_base_to_offset(current_offset))
 
             if firmware_file.size < 24:
                 # This is a problem, the file was corrupted.
@@ -1279,7 +1291,7 @@ class FirmwareVolume(FirmwareObject):
     raw_objects = []
     '''list: Set of RawObjects discovered in volume.'''
 
-    def __init__(self, data, name="0"):
+    def __init__(self, data, name="0", base=0):
         self.firmware_filesystems = []
         self.raw_objects = []
         self.name = name
@@ -1303,12 +1315,14 @@ class FirmwareVolume(FirmwareObject):
 
         self.blocks = []
         self.block_map = ""
+        self.base = base
 
         try:
             data = data[:self.size]
 
             self._data = data
             self.data = data[self.hdrlen:]
+            self.data_offset = self.hdrlen
             self.block_map = data[self._HEADER_SIZE:self.hdrlen]
         except Exception as e:
             dlog(self, name, "Exception in __init__: %s" % (str(e)))
@@ -1366,14 +1380,16 @@ class FirmwareVolume(FirmwareObject):
             FIRMWARE_VOLUME_GUIDS["PFH1"],
             FIRMWARE_VOLUME_GUIDS["PFH2"],
         ]
+        current_offset = 0
         for block in self.blocks:
+            object_size = block[0] * block[1]
             if sguid(self.guid) in ffs_guids:
                 # FIXME: there may only be a single FFS, which is the FV body
                 # see https://uefi.org/sites/default/files/resources/PI_Spec_1_7_A_final_May1.pdf
                 # Volume 3, section 2.1.2
                 # and https://edk2-docs.gitbook.io/edk-ii-build-specification/2_design_discussion/22_uefipi_firmware_images
                 firmware_filesystem = FirmwareFileSystem(
-                    data[:block[0] * block[1]])
+                    data[:object_size], base=self._add_base_to_offset(current_offset))
                 ffs_status = firmware_filesystem.process()
                 if not ffs_status:
                     dlog(self, self.name, 'Could not parse FFS')
@@ -1382,10 +1398,11 @@ class FirmwareVolume(FirmwareObject):
             elif sguid(self.guid) == FIRMWARE_VOLUME_GUIDS["NVRAM_EVSA"]:
                 # If this is an NVRAM volume, there are no FFS/FFs.
                 self.raw_objects.append(
-                    NVARVariableStore(data[:block[0] * block[1]]))
+                    NVARVariableStore(data[:object_size], base=self._add_base_to_offset(current_offset)))
             else:
-                self.raw_objects.append(data[:block[0] * block[1]])
-            data = data[block[0] * block[1]:]
+                self.raw_objects.append(data[:object_size])
+            data = data[object_size:]
+            current_offset += object_size 
         return status
 
     def build(self, generate_checksum=False, debug=False):
@@ -1599,12 +1616,12 @@ class FirmwareCapsule(FirmwareObject):
         self.preamble = self.data[:self.offsets["capsule_body"]]
         self.parse_sections(None)
 
-        fv = FirmwareVolume(self.data[self.offsets["capsule_body"]:])
+        fv = FirmwareVolume(self.data[self.offsets["capsule_body"]:], base=self._add_base_to_offset(self.offsets["capsule_body"]))
         if not fv.valid_header:
             # The body could be an offset from the end of the header (Intel
             # does this).
             fv = FirmwareVolume(
-                self.data[self.offsets["capsule_body"] - self.header_size:])
+                self.data[self.offsets["capsule_body"] - self.header_size:], base=self._add_base_to_offset(self.offsets["capsule_body"] - self.header_size))
             if not fv.valid_header:
                 return False
 

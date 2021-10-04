@@ -14,11 +14,16 @@ class BaseObject(object):
 
 class FirmwareObject(object):
     '''A pseudo-abstract type providing common firmware member facilities.'''
+    def _add_base_to_offset(self, offset: int) -> int:
+        return self.base + offset + 0 if not self.data_offset else self.data_offset
+
     def __init__(self):
         self.data = None
         self._name = None
         self.attrs = None
         self.guid = None
+        self.base = None
+        self.data_offset = None
 
     @property
     def name(self):
@@ -144,9 +149,10 @@ class StructuredObject(object):
 
 class RawObject(FirmwareObject, BaseObject):
 
-    def __init__(self, data):
+    def __init__(self, data, base=0):
         self.data = data
         self.size = len(data)
+        self.base = 0
 
     def build(self, generate_checksum, debug=False):
         return self.data

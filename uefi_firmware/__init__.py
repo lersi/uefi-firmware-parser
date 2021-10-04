@@ -158,12 +158,13 @@ class MultiVolumeContainer(FirmwareObject):
     instead of a UEFIFirmwareVolume.
     '''
 
-    def __init__(self, data):
+    def __init__(self, data, base=0):
         '''Initialize the container with the tail content from a volume.'''
         self.data = data
         self.indexes = search_firmware_volumes(data)
         self.volumes = []
         self.size = 0
+        self.base = base
 
     def has_indexes(self):
         '''Check if any indexes were discovered.'''
@@ -175,7 +176,7 @@ class MultiVolumeContainer(FirmwareObject):
 
     def process(self):
         for index in self.indexes:
-            volume = uefi.FirmwareVolume(self.data[index - 40:], index)
+            volume = uefi.FirmwareVolume(self.data[index - 40:], index, base=self._add_base_to_offset(index-40))
             if volume.process():
                 self.size += volume.size
                 self.volumes.append(volume)
