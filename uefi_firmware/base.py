@@ -24,6 +24,7 @@ class FirmwareObject(object):
         self.guid = None
         self.base = None
         self._data_offset = None
+        self.parent = None
 
     @property
     def name(self):
@@ -149,11 +150,12 @@ class StructuredObject(object):
 
 class RawObject(FirmwareObject, BaseObject):
 
-    def __init__(self, data, base=0):
+    def __init__(self, data, parent, base=0):
         self.data = data
         self.size = len(data)
         self.base = 0
         self._data_offset = None
+        self.parent = parent
 
     def build(self, generate_checksum, debug=False):
         return self.data
@@ -177,9 +179,12 @@ class AutoRawObject(RawObject):
     '''A RawObject that applies AutoParser logic for embedded object discovery.
     '''
 
-    def __init__(self, data):
+    def __init__(self, data, parent, base=0):
         self.object = None
         self.data = data
+        self.base = 0
+        self._data_offset = None
+        self.parent = parent
 
     @property
     def objects(self):

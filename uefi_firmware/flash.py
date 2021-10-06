@@ -32,13 +32,14 @@ class DescriptorMap(StructuredObject):
 
 class FlashRegion(FirmwareObject, BaseObject):
 
-    def __init__(self, data, region_name, region_details, base=0):
+    def __init__(self, data, region_name, region_details, parent, base=0):
         self.sections = []
         self.data = data
         self.attrs = region_details
         self.name = region_name
         self.base = base
         self._data_offset = None
+        self.parent = parent
 
     @property
     def objects(self):
@@ -54,7 +55,7 @@ class FlashRegion(FirmwareObject, BaseObject):
                 volume_index = search_firmware_volumes(data, limit=1)
                 if len(volume_index) == 0:
                     break
-                fv = FirmwareVolume(data[volume_index[0] - 40:], base=self._add_base_to_offset(current_offset + volume_index[0] - 40))
+                fv = FirmwareVolume(data[volume_index[0] - 40:], parent=self, base=self._add_base_to_offset(current_offset + volume_index[0] - 40))
                 if fv.valid_header:
                     self.sections.append(fv)
                     data = data[volume_index[0] - 40 + fv.size:]
@@ -142,7 +143,7 @@ class FlashDescriptor(FirmwareObject):
             "id": self.master.structure.BiosId,
             "read": self.master.structure.BiosRead,
             "write": self.master.structure.BiosWrite
-        }, bios_offset)
+        }, parent=self, base=bios_offset)
         bios_region.process()
         self.regions.append(bios_region)
 
@@ -158,7 +159,7 @@ class FlashDescriptor(FirmwareObject):
             "id": self.master.structure.MeId,
             "read": self.master.structure.MeRead,
             "write": self.master.structure.MeWrite
-        }, me_offset)
+        }, parent=self, base=me_offset)
         me_region.process()
         self.regions.append(me_region)
 
@@ -174,7 +175,7 @@ class FlashDescriptor(FirmwareObject):
             "id": self.master.structure.GbeId,
             "read": self.master.structure.GbeRead,
             "write": self.master.structure.GbeWrite
-        })
+        }, parent=self, base=gbe_offset)
         gbe_region.process()
         self.regions.append(gbe_region)
 
@@ -187,7 +188,7 @@ class FlashDescriptor(FirmwareObject):
         pdr_region = FlashRegion(pdr, "pdr", {
             "base": pdr_base,
             "limit": pdr_limit,
-        })
+        }, parent=self, base=pdr_offset)
         pdr_region.process()
         self.regions.append(pdr_region)
         return True
