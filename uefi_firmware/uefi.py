@@ -164,11 +164,11 @@ class FirmwareVariableStore(FirmwareObject, StructuredObject):
 class FirmwareVariable(FirmwareObject, StructuredObject):
 
     '''A firmware-related variable, found in a variable store.'''
-    subsections = []
+    sub_variables = []
 
     @property
     def objects(self):
-        return self.subsections
+        return self.sub_variables
 
 
 class NVARVariable(FirmwareVariable):
@@ -196,6 +196,7 @@ class NVARVariable(FirmwareVariable):
         self.base = base
         self._data_offset = None
         self.parent = parent
+        self.sub_variables = []
 
     def process(self):
         dlog(self, 'NVAR')
@@ -229,6 +230,17 @@ class NVARVariable(FirmwareVariable):
             self.name = var_name
             offset += var_name_size
 
+            if self.name == 'StdDefaults':
+                current_offset = self.data_offset
+                data = self.data[current_offset:]
+                while len(data) > 4:
+                    nvar = NVARVariable(data, parent=self, base=self._add_base_to_offset(current_offset))
+                    if not nvar.process():
+                        break
+                    self.sub_variables.append(nvar)
+                    data = data[nvar.size:]
+                    current_offset += nvar.size
+                    
         # The variable's meta-data is the value.
         self.data_offset = offset
 
