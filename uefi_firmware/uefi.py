@@ -1556,10 +1556,12 @@ class FirmwareCapsule(FirmwareObject):
     capsule_body = None
     '''binary: Data string of the capsule content.'''
 
-    def __init__(self, data, name="Capsule"):
+    def __init__(self, data, name="Capsule", base=0):
         self.name = name
         self.valid_header = True
         self.data = None
+        self.parent = None
+        self.base = base
 
         self.capsule_guid = data[:16]
         self.guid = "\x00" * 16
@@ -1579,6 +1581,7 @@ class FirmwareCapsule(FirmwareObject):
         # Set data (original, and body content)
         self._data = data
         self.data = data[self.header_size:]
+        self._data_offset = self.header_size
 
         pass
 
