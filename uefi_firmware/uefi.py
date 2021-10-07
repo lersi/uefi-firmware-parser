@@ -231,7 +231,7 @@ class NVARVariable(FirmwareVariable):
             offset += var_name_size
 
             if self.name == 'StdDefaults':
-                current_offset = self.data_offset
+                current_offset = offset
                 data = self.data[current_offset:]
                 while len(data) > 4:
                     nvar = NVARVariable(data, parent=self, base=self._add_base_to_offset(current_offset))
